@@ -1,10 +1,11 @@
 package main
 
 import (
+	"crypto/rand"
 	"fmt"
 	"log"
 	"math"
-	"math/rand/v2"
+	mathrand "math/rand/v2"
 
 	"gonum.org/v1/gonum/mat"
 )
@@ -33,7 +34,7 @@ func GenerateOrthogonalMatrix(seed []byte, dim int) (*mat.Dense, error) {
 	// Copy seed to [32]byte array required by NewChaCha8
 	var seed32 [32]byte
 	copy(seed32[:], seed)
-	rng := rand.New(rand.NewChaCha8(seed32))
+	rng := mathrand.New(mathrand.NewChaCha8(seed32))
 
 	data := make([]float64, dim*dim)
 	for i := range data {
@@ -51,13 +52,31 @@ func GenerateOrthogonalMatrix(seed []byte, dim int) (*mat.Dense, error) {
 	return &q, nil
 }
 
+// GenerateSecureNoise generates the perturbation vector lambda_m for the SAP scheme
+// using a fast, user-space CSPRNG (ChaCha8) seeded with system entropy.
+func GenerateSecureNoise(dim int, scalingFactor float64, approximationFactor float64) ([]float64, error) {
+	// 1. Generate a 32-byte seed from crypto/rand (1 syscall)
+	var seed [32]byte
+	if _, err := rand.Read(seed[:]); err != nil {
+		return nil, fmt.Errorf("failed to generate random seed: %w", err)
+	}
+
+	// 2. Initialize ChaCha8 CSPRNG
+	rng := mathrand.New(mathrand.NewChaCha8(seed))
+
+	// 3. Generate Noise
+	return GenerateNormalizedVector(rng, dim, scalingFactor, approximationFactor), nil
+}
+
 // GenerateNormalizedVector generates the perturbation vector lambda_m for the SAP scheme.
 // Logic mirrors IronCore Alloy's crypto.rs:
 // 1. u <-- N(0, I_d)
 // 2. x' <-- U(0, 1)
 // 3. x <-- (s * beta / 4) * (x')^(1/d)
 // 4. lambda_m <-- u * x / ||u||
-func GenerateNormalizedVector(rng *rand.Rand, dim int, scalingFactor float64, approximationFactor float64) []float64 {
+//
+// NOTE: This accepts *math/rand/v2.Rand for performance.
+func GenerateNormalizedVector(rng *mathrand.Rand, dim int, scalingFactor float64, approximationFactor float64) []float64 {
 	// 1. Sample u from multivariate normal distribution N(0, I_d)
 	// Since covariance is identity, we can just sample d independent standard normals.
 	u := make([]float64, dim)

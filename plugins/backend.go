@@ -29,10 +29,19 @@ type vectorBackend struct {
 	matrixLock   sync.RWMutex
 	cachedMatrix *mat.Dense
 	cachedConfig *rotationConfig
+	bufferPool   sync.Pool
 }
 
 func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
-	b := &vectorBackend{}
+	b := &vectorBackend{
+		bufferPool: sync.Pool{
+			New: func() interface{} {
+				// Initialize with 0 length, will be resized as needed
+				s := make([]float64, 0)
+				return &s
+			},
+		},
+	}
 
 	b.Backend = &framework.Backend{
 		BackendType: logical.TypeLogical,
