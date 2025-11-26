@@ -84,10 +84,16 @@ func (b *vectorBackend) handleConfigRotate(ctx context.Context, req *logical.Req
 	if err != nil {
 		return nil, fmt.Errorf("invalid scaling_factor: %w", err)
 	}
+	if scalingFactor <= 0 {
+		return nil, fmt.Errorf("scaling_factor must be positive (got %v)", scalingFactor)
+	}
 
 	approximationFactor, err := coerceFloat(data.Get("approximation_factor"))
 	if err != nil {
 		return nil, fmt.Errorf("invalid approximation_factor: %w", err)
+	}
+	if approximationFactor < 0 {
+		return nil, fmt.Errorf("approximation_factor must be non-negative (got %v)", approximationFactor)
 	}
 
 	seed := make([]byte, seedLength)
