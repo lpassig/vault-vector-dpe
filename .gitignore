@@ -1,0 +1,25 @@
+# Binaries
+bin/
+plugins/bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Logs
+*.log
+
+# IDEs
+.idea/
+.vscode/
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local Test Data
+vector.json
+
