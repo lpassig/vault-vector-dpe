@@ -107,7 +107,7 @@ func GenerateSecureNoise(buffer []float64, dim int, scalingFactor float64, appro
 	}
 
 	// 2. Generate Noise
-	return GenerateNormalizedVector(rng, buffer, dim, scalingFactor, approximationFactor), nil
+	return GenerateNormalizedVector(rng, buffer, dim, scalingFactor, approximationFactor)
 }
 
 // GenerateNormalizedVector generates the perturbation vector lambda_m for the SAP scheme.
@@ -118,7 +118,8 @@ func GenerateSecureNoise(buffer []float64, dim int, scalingFactor float64, appro
 // 4. lambda_m <-- u * x / ||u||
 //
 // NOTE: This accepts *math/rand/v2.Rand for performance.
-func GenerateNormalizedVector(rng *mathrand.Rand, buffer []float64, dim int, scalingFactor float64, approximationFactor float64) []float64 {
+// Returns an error if the generated normal vector has zero norm (astronomically unlikely).
+func GenerateNormalizedVector(rng *mathrand.Rand, buffer []float64, dim int, scalingFactor float64, approximationFactor float64) ([]float64, error) {
 	// Use provided buffer or allocate
 	lambdaM := buffer
 	if cap(lambdaM) < dim {
@@ -140,6 +141,11 @@ func GenerateNormalizedVector(rng *mathrand.Rand, buffer []float64, dim int, sca
 	}
 	uNorm := math.Sqrt(normSq)
 
+	// Guard against division by zero (astronomically unlikely but theoretically possible)
+	if uNorm == 0 {
+		return nil, fmt.Errorf("generated normal vector has zero norm")
+	}
+
 	// 2. Sample x' from uniform distribution U(0, 1)
 	xPrime := rng.Float64()
 
@@ -156,5 +162,5 @@ func GenerateNormalizedVector(rng *mathrand.Rand, buffer []float64, dim int, sca
 		lambdaM[i] = lambdaM[i] * scale
 	}
 
-	return lambdaM
+	return lambdaM, nil
 }

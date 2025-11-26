@@ -126,20 +126,11 @@ func (b *vectorBackend) getMatrixAndConfig(ctx context.Context, storage logical.
 		return nil, nil, fmt.Errorf("decode seed: %w", err)
 	}
 
+	// GenerateOrthogonalMatrix internally validates orthogonality and returns
+	// an error if the check fails. No need to validate again here.
 	matrix, err := GenerateOrthogonalMatrix(seedBytes, cfg.Dimension)
 	if err != nil {
 		return nil, nil, err
-	}
-
-	// Validate Orthogonality before using
-	if err := ValidateOrthogonality(matrix); err != nil {
-		// If validation fails, we must fail hard and NOT cache this matrix.
-		// Securely erase generated matrix before returning
-		data := matrix.RawMatrix().Data
-		for i := range data {
-			data[i] = 0
-		}
-		return nil, nil, fmt.Errorf("generated matrix failed orthogonality check: %w", err)
 	}
 
 	b.cachedMatrix = matrix
