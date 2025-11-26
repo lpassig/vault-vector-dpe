@@ -38,9 +38,9 @@ except ImportError:
 # Configuration
 VAULT_URL = os.environ.get('VAULT_ADDR', 'http://127.0.0.1:8200')
 VAULT_TOKEN = os.environ.get('VAULT_TOKEN', 'root')
-PLUGIN_NAME = 'vault-vector-dpe'
+PLUGIN_NAME = 'vault-plugin-secrets-vector-dpe'
 MOUNT_POINT = 'vector-test'
-BUILD_DIR = './plugins'
+BUILD_DIR = './cmd/vault-plugin-secrets-vector-dpe'
 # Plugin dir is relative to the script location (repo root)
 PLUGIN_DIR = os.environ.get('VAULT_PLUGIN_DIR', None)  # Will be set to absolute path
 
@@ -71,13 +71,13 @@ def phase_1_build(script_dir: str):
     print("📦 PHASE 1: Build Plugin Binary")
     print("=" * 60)
 
-    # Use absolute path for plugin directory (at repo root, not in plugins/)
+    # Use absolute path for plugin directory (at repo root)
     plugin_dir = PLUGIN_DIR or os.path.join(script_dir, 'bin')
     os.makedirs(plugin_dir, exist_ok=True)
 
-    # Build - output to repo root bin/, not plugins/bin/
+    # Build from repo root using new cmd/ structure
     binary_path = os.path.join(plugin_dir, PLUGIN_NAME)
-    result = run_cmd(['go', 'build', '-o', binary_path, '.'], check=True)
+    result = run_cmd(['go', 'build', '-o', binary_path, './cmd/vault-plugin-secrets-vector-dpe'], check=True)
     
     if not os.path.exists(binary_path):
         print(f"    ❌ Binary not found at {binary_path}")
@@ -303,17 +303,16 @@ def main():
         print("   Please re-run this script.")
         sys.exit(0)
 
-    # Change to build directory
+    # Change to repo root directory
     original_dir = os.getcwd()
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    os.chdir(os.path.join(script_dir, 'plugins'))
+    script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # Go up from scripts/
+    os.chdir(script_dir)
 
     try:
         # Phase 1: Build
         binary_path, sha256, plugin_dir = phase_1_build(script_dir)
 
-        # Phase 2: Register
-        os.chdir(script_dir)  # Go back to root for vault commands
+        # Phase 2: Register (already in repo root)
         phase_2_register(sha256, plugin_dir)
 
         # Initialize hvac client

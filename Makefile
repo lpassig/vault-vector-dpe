@@ -1,46 +1,75 @@
-GOARCH = amd64
+# Makefile for vault-plugin-secrets-vector-dpe
+# Following HashiCorp Vault plugin conventions
 
-UNAME = $(shell uname -s)
+PLUGIN_NAME := vault-plugin-secrets-vector-dpe
+PLUGIN_DIR := ./bin
+GOFLAGS := -ldflags="-s -w"
 
-ifndef OS
-	ifeq ($(UNAME), Linux)
-		OS = linux
-	else ifeq ($(UNAME), Darwin)
-		OS = darwin
-	endif
-endif
+.PHONY: all build clean test lint fmt dev-register help
 
-.PHONY: build clean fmt test lint
+# Default target
+all: build
 
-default: build
-
-all: fmt lint test build
-
+# Build the plugin binary
 build:
-	@echo "Building vault-vector-dpe..."
-	@cd plugins && go build -o bin/vault-vector-dpe .
+	@echo "==> Building $(PLUGIN_NAME)..."
+	@mkdir -p $(PLUGIN_DIR)
+	go build $(GOFLAGS) -o $(PLUGIN_DIR)/$(PLUGIN_NAME) ./cmd/$(PLUGIN_NAME)
+	@echo "==> Binary: $(PLUGIN_DIR)/$(PLUGIN_NAME)"
+	@shasum -a 256 $(PLUGIN_DIR)/$(PLUGIN_NAME) | cut -d' ' -f1 > $(PLUGIN_DIR)/$(PLUGIN_NAME).sha256
+	@echo "==> SHA256: $$(cat $(PLUGIN_DIR)/$(PLUGIN_NAME).sha256)"
 
+# Clean build artifacts
 clean:
-	@rm -f plugins/bin/vault-vector-dpe
-	@rm -f vector.json
+	@echo "==> Cleaning..."
+	rm -rf $(PLUGIN_DIR)
+	go clean
 
-fmt:
-	@cd plugins && go fmt ./...
-
-lint:
-	@echo "Linting..."
-	@cd plugins && go vet ./...
-
+# Run tests
 test:
-	@echo "Running tests..."
-	@cd plugins && go test -v ./...
+	@echo "==> Running tests..."
+	go test -v -race ./...
 
-# Helper to register with a local dev vault (requires vault server running)
+# Run linter (requires golangci-lint)
+lint:
+	@echo "==> Running linter..."
+	@which golangci-lint > /dev/null || (echo "Installing golangci-lint..." && go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest)
+	golangci-lint run ./...
+
+# Format code
+fmt:
+	@echo "==> Formatting code..."
+	go fmt ./...
+	goimports -w .
+
+# Register plugin with local Vault dev server
+# Requires: VAULT_ADDR and VAULT_TOKEN environment variables
 dev-register: build
-	@echo "Calculating SHA256..."
-	$(eval SHASUM := $(shell shasum -a 256 plugins/bin/vault-vector-dpe | cut -d " " -f1))
-	@echo "SHA256: $(SHASUM)"
-	@echo "Registering plugin..."
-	@vault plugin register -sha256=$(SHASUM) -command="vault-vector-dpe" secret vector-dpe || true
-	@echo "Enabling secrets engine..."
-	@vault secrets enable -path=vector vector-dpe || true
+	@echo "==> Registering plugin with Vault..."
+	@SHA256=$$(cat $(PLUGIN_DIR)/$(PLUGIN_NAME).sha256) && \
+	vault plugin register -sha256=$$SHA256 -command=$(PLUGIN_NAME) secret $(PLUGIN_NAME) && \
+	vault secrets enable -path=vector $(PLUGIN_NAME) || true
+	@echo "==> Plugin registered at: vector/"
+
+# Start Vault dev server with plugin directory
+dev-server: build
+	@echo "==> Starting Vault dev server..."
+	VAULT_DEV_ROOT_TOKEN_ID=root vault server -dev -dev-plugin-dir=$(PLUGIN_DIR)
+
+# Run validation scripts
+validate: build
+	@echo "==> Running validation scripts..."
+	cd scripts && python3 verify_release.py
+
+# Show help
+help:
+	@echo "Available targets:"
+	@echo "  build        - Build the plugin binary"
+	@echo "  clean        - Remove build artifacts"
+	@echo "  test         - Run unit tests"
+	@echo "  lint         - Run golangci-lint"
+	@echo "  fmt          - Format code"
+	@echo "  dev-register - Register plugin with local Vault"
+	@echo "  dev-server   - Start Vault dev server with plugin"
+	@echo "  validate     - Run Python validation scripts"
+	@echo "  help         - Show this help message"

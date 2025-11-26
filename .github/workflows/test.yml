@@ -1,29 +1,35 @@
-name: Tests
+name: Test
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [main, master]
   pull_request:
-    branches: [ "master" ]
+    branches: [main, master]
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.22'
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
 
-    - name: Build
-      run: |
-        cd plugins
-        go build -v ./...
+      - name: Download dependencies
+        run: go mod download
 
-    - name: Test
-      run: |
-        cd plugins
-        go test -v ./...
+      - name: Run tests
+        run: go test -v -race ./...
 
+      - name: Build plugin
+        run: |
+          mkdir -p bin
+          go build -o bin/vault-plugin-secrets-vector-dpe ./cmd/vault-plugin-secrets-vector-dpe
+
+      - name: Verify binary
+        run: |
+          ls -la bin/
+          shasum -a 256 bin/vault-plugin-secrets-vector-dpe

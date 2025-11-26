@@ -1,93 +1,143 @@
-# Vault Vector DPE (Distance-Preserving Encryption)
+# Vault Plugin: Secrets Vector DPE
 
-A **HashiCorp Vault Secrets Engine** that implements **Approximate Distance-Comparison-Preserving Encryption (DCPE)** for vector embeddings.
+[![Go](https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![Vault](https://img.shields.io/badge/Vault-1.15+-000000?style=flat&logo=vault)](https://www.vaultproject.io/)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-This plugin enables secure vector search (e.g., in Pinecone, Milvus, or Weaviate) by encrypting embeddings in a way that preserves their approximate relative distances. It implements the **Scale-And-Perturb (SAP)** scheme to providing strong resistance against Chosen-Plaintext Attacks (CPA) through probabilistic encryption.
+A **HashiCorp Vault Secrets Engine** that implements **Approximate Distance-Preserving Encryption (DPE)** for vector embeddings using the **Scale-And-Perturb (SAP)** scheme.
+
+This plugin enables **secure vector search** on encrypted data in vector databases like Pinecone, Milvus, or Weaviate—without exposing the raw embeddings.
+
+---
 
 ## 🔑 Key Features
 
-*   **Approximate Distance Preservation**: Encrypted vectors can still be searched using Cosine Similarity or Euclidean Distance with high accuracy.
-*   **Probabilistic Encryption**: Unlike standard rotation, this plugin adds noise to every encryption operation. Encrypting the same vector twice yields different ciphertexts ($C_1 \neq C_2$), defeating simple frequency analysis.
-*   **Tunable Security/Utility**: Configure the trade-off between search accuracy and cryptographic security using the `approximation_factor`.
-*   **Stateless**: The encryption key (Orthogonal Matrix) is derived deterministically from a seed stored in Vault, requiring no large matrix storage.
-*   **Cryptographically Secure**: Uses AES-CTR based RNG for full 256-bit entropy utilization and secure noise generation.
+| Feature | Description |
+|---------|-------------|
+| **Distance Preservation** | Encrypted vectors maintain approximate Cosine Similarity and Euclidean Distance |
+| **Probabilistic Encryption** | Same input → different outputs (CPA resistance) |
+| **Tunable Security** | Configure the accuracy/security trade-off via `approximation_factor` |
+| **High Performance** | ChaCha8 CSPRNG, matrix caching, memory pooling |
+| **Production Ready** | Input validation, DoS protection, panic recovery, audit logging |
 
 ---
 
-## 📐 Architecture: Scale-And-Perturb (SAP)
+## 📐 Architecture
 
-The plugin uses the **SAP** scheme (similar to IronCore Alloy) to transform a plaintext vector $v$ into a ciphertext $C$:
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        VAULT PLUGIN ARCHITECTURE                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌──────────┐                                                               │
+│  │  CLIENT  │                                                               │
+│  │ (App/ML) │                                                               │
+│  └────┬─────┘                                                               │
+│       │                                                                     │
+│       │ POST /vector/encrypt/vector                                         │
+│       │ { "vector": [0.1, 0.2, ...] }                                       │
+│       ▼                                                                     │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                         VAULT SERVER                                 │   │
+│  │  ┌─────────────────────────────────────────────────────────────┐    │   │
+│  │  │                    vault-plugin-secrets-vector-dpe           │    │   │
+│  │  │                                                              │    │   │
+│  │  │   ┌──────────────┐    ┌──────────────────────────────────┐  │    │   │
+│  │  │   │   CONFIG     │    │         RUNTIME (Cached)         │  │    │   │
+│  │  │   │              │    │                                  │  │    │   │
+│  │  │   │  • Seed (32B)│───▶│  • Orthogonal Matrix Q (N×N)    │  │    │   │
+│  │  │   │  • Dimension │    │  • Derived via QR Decomposition  │  │    │   │
+│  │  │   │  • Scale (s) │    │  • Haar-distributed rotation     │  │    │   │
+│  │  │   │  • Beta (β)  │    │                                  │  │    │   │
+│  │  │   └──────────────┘    └──────────────────────────────────┘  │    │   │
+│  │  │                                                              │    │   │
+│  │  │   ┌──────────────────────────────────────────────────────┐  │    │   │
+│  │  │   │              ENCRYPTION (Per Request)                 │  │    │   │
+│  │  │   │                                                       │  │    │   │
+│  │  │   │   Input: v (plaintext vector)                        │  │    │   │
+│  │  │   │                                                       │  │    │   │
+│  │  │   │   1. Rotate:    v' = Q × v                           │  │    │   │
+│  │  │   │   2. Generate:  λ  ← ChaCha8(crypto/rand)            │  │    │   │
+│  │  │   │   3. Encrypt:   C  = s·v' + λ                        │  │    │   │
+│  │  │   │                                                       │  │    │   │
+│  │  │   │   Output: C (ciphertext vector)                      │  │    │   │
+│  │  │   └──────────────────────────────────────────────────────┘  │    │   │
+│  │  │                                                              │    │   │
+│  │  └──────────────────────────────────────────────────────────────┘    │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│       │                                                                     │
+│       │ Response: { "ciphertext": [1.24, -0.55, ...] }                     │
+│       ▼                                                                     │
+│  ┌──────────┐                                                               │
+│  │  CLIENT  │───────────────▶ Vector Database (Pinecone, Milvus, etc.)     │
+│  └──────────┘                                                               │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
-$$
-C = s \cdot Q \cdot v + \lambda_m
-$$
+### The Math: Scale-And-Perturb (SAP)
 
-Where:
-*   **$Q$**: An Orthogonal Matrix ($Q^T Q = I$) derived from a secret seed. This rotates the vector in high-dimensional space. The matrix is generated using a CSPRNG (AES-CTR) to ensure the full 256-bit seed entropy is used.
-*   **$s$**: A secret scaling factor (scalar).
-*   **$\lambda_m$**: A **random noise vector** generated fresh for every request using a secure RNG. It is sampled uniformly from a ball derived from the `approximation_factor` ($\beta$).
+$$C = s \cdot Q \cdot v + \lambda$$
 
-Because $\lambda_m$ is random, the encryption is **probabilistic**. An attacker cannot easily solve the linear system $C = Q \cdot v$ to recover $Q$ because the exact values are masked by noise.
+| Symbol | Description |
+|--------|-------------|
+| $Q$ | Orthogonal matrix derived from secret seed (Haar measure) |
+| $s$ | Scaling factor (amplifies signal) |
+| $\lambda$ | Random noise vector (fresh per request, from ball of radius $s\beta/4$) |
+| $\beta$ | Approximation factor (controls noise magnitude) |
+
+The noise $\lambda$ makes encryption **probabilistic**: encrypting the same vector twice yields different ciphertexts, preventing frequency analysis.
 
 ---
 
-## 🚀 Installation & Registration
+## 🚀 Installation
 
-### 1. Build the Plugin
-Requires Go 1.22+.
+### Prerequisites
+
+- Go 1.22+
+- HashiCorp Vault 1.15+
+
+### Build
 
 ```bash
-cd plugins/
-go build -o vault-vector-dpe .
+# Clone the repository
+git clone https://github.com/lpassig/vault-plugin-secrets-vector-dpe.git
+cd vault-plugin-secrets-vector-dpe
+
+# Build the plugin
+make build
+
+# Output:
+#   bin/vault-plugin-secrets-vector-dpe
+#   bin/vault-plugin-secrets-vector-dpe.sha256
 ```
 
-### 2. Install into Vault
-Move the binary to your Vault plugin directory (configured in your Vault server config).
+### Register with Vault
 
 ```bash
-# Example: /etc/vault/plugins or ~/.vault.d/plugins
-mv vault-vector-dpe ~/.vault.d/plugins/
-```
+# Set environment variables
+export VAULT_ADDR='http://127.0.0.1:8200'
+export VAULT_TOKEN='your-token'
 
-### 3. Calculate Checksum
-Vault requires the SHA256 checksum of the binary for registration.
+# Get the SHA256 checksum
+SHA256=$(cat bin/vault-plugin-secrets-vector-dpe.sha256)
 
-```bash
-SHASUM=$(shasum -a 256 ~/.vault.d/plugins/vault-vector-dpe | cut -d " " -f1)
-echo $SHASUM
-```
-
-### 4. Register & Enable
-Register the plugin with the Vault server and enable the secrets engine.
-
-```bash
 # Register the plugin
 vault plugin register \
-    -sha256=$SHASUM \
-    -command="vault-vector-dpe" \
-    secret vector-dpe
+    -sha256=$SHA256 \
+    -command=vault-plugin-secrets-vector-dpe \
+    secret vault-plugin-secrets-vector-dpe
 
-# Enable the secrets engine at path 'vector/'
-vault secrets enable -path=vector vector-dpe
+# Enable the secrets engine
+vault secrets enable -path=vector vault-plugin-secrets-vector-dpe
 ```
 
 ---
 
 ## ⚙️ Configuration
 
-Before you can encrypt vectors, you must initialize the engine by generating a seed and setting the SAP parameters.
+Initialize the encryption key and parameters:
 
-**Endpoint:** `config/rotate`
-
-### Parameters
-
-| Parameter | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `dimension` | `int` | `1536` | Dimensionality of your embeddings (e.g., 1536 for OpenAI `text-embedding-3-small`). **Max: 8192**. |
-| `scaling_factor` | `float` | `1.0` | Scalar multiplier ($s$). Scales the magnitude of encrypted vectors. |
-| `approximation_factor` | `float` | `5.0` | The Noise Factor ($\beta$). **Higher = More Secure** (more noise), but **Less Accurate** search. |
-
-### Example: Initialize with High Security
 ```bash
 vault write vector/config/rotate \
     dimension=1536 \
@@ -95,83 +145,162 @@ vault write vector/config/rotate \
     approximation_factor=5.0
 ```
 
-> **Note:** Calling this endpoint again **Rotates the Key**. It generates a new random seed, effectively invalidating all previously encrypted data (unless you re-index).
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `dimension` | int | 1536 | Vector dimension (max: 8192) |
+| `scaling_factor` | float | 1.0 | Scalar multiplier $s$ (must be > 0) |
+| `approximation_factor` | float | 5.0 | Noise factor $\beta$ (higher = more secure, less accurate) |
+
+> ⚠️ **Warning:** Calling `config/rotate` generates a new key. Previously encrypted vectors will no longer be searchable.
 
 ---
 
 ## 🔒 Usage
 
 ### Encrypt a Vector
-Send a JSON array of floats to the `encrypt/vector` endpoint.
 
-**Request:**
 ```bash
-vault write -format=json vector/encrypt/vector vector='[0.1, 0.5, -0.2, ...]'
+vault write -format=json vector/encrypt/vector \
+    vector='[0.1, 0.5, -0.2, 0.8, ...]'
 ```
 
-**Response:**
+### Response
+
 ```json
 {
-  "request_id": "8f2b...",
   "data": {
-    "ciphertext": [
-      1.24501,
-      -0.55210,
-      0.00321,
-      ...
-    ]
+    "ciphertext": [1.245, -0.552, 0.003, 2.891, ...]
   }
 }
 ```
 
 ### Probabilistic Check
-If you run the above command twice with the **exact same input**, you will get **different ciphertexts**.
-*   $C_1 \neq C_2$
-*   However, $dist(C_1, C_2)$ will be small (within the noise margin).
+
+Encrypting the same vector twice produces **different** ciphertexts:
+
+```bash
+# First encryption
+C1=$(vault write -format=json vector/encrypt/vector vector='[0.1, 0.2]' | jq '.data.ciphertext')
+
+# Second encryption (same input)
+C2=$(vault write -format=json vector/encrypt/vector vector='[0.1, 0.2]' | jq '.data.ciphertext')
+
+# C1 ≠ C2 (probabilistic encryption)
+```
 
 ---
 
 ## 🛡️ Production Hardening
 
-### 1. Strict Access Control (AppRole)
-Treat the `encrypt/vector` endpoint as a **Signing Oracle**. If an attacker can encrypt arbitrary vectors, they may attempt statistical attacks to estimate the matrix $Q$.
-*   **DO NOT** allow human users access to this path.
-*   **ONLY** allow trusted ingestion services (e.g., your Vector DB loader) via **AppRole** or **Kubernetes Auth**.
-
-### 2. Rate Limiting (Crucial)
-To prevent **Mean Estimation Attacks** (where an attacker encrypts the same vector thousands of times to average out the noise $\lambda_m$), you **must** apply a rate limit.
+### 1. Access Control
 
 ```bash
-# Limit to 50 requests/second
-vault write sys/quotas/rate-limit/vector-encrypt \
-    path=vector/encrypt/vector \
-    rate=50
+# Create a policy for the ingestion service only
+vault policy write vector-encrypt - <<EOF
+path "vector/encrypt/vector" {
+  capabilities = ["create", "update"]
+}
+EOF
+
+# Use AppRole authentication for services
+vault auth enable approle
+vault write auth/approle/role/ingestion-service \
+    policies=vector-encrypt \
+    token_ttl=1h
 ```
 
-### 3. Memory Hygiene
-Ensure your Vault server has `disable_mlock = false` (default) in its configuration. The orthogonal matrix $Q$ is large (~18MB for dim=1536) and resides in memory; `mlock` prevents it from being swapped to disk.
+### 2. Rate Limiting
 
-### 4. Input Validation & DoS Protection
-*   **Dimension Limit**: The plugin enforces a strict maximum dimension of **8192** to prevent memory exhaustion attacks.
-*   **Input Sanitization**: Inputs containing `NaN` or `Infinity` are rejected to prevent mathematical corruption.
-*   **Matrix Validation**: The plugin validates the orthogonality of the generated matrix ($Q^T Q \approx I$) before use to ensure mathematical correctness.
+Prevent **Mean Estimation Attacks** by limiting encryption requests:
 
-### 5. Monitoring & Auditing
-*   **Audit Logging**: The plugin logs encryption request metadata (dimension, client ID) to the Vault logs for audit trails. Plaintext vectors are **never** logged.
-*   **Resource Warnings**: The configuration endpoint warns if the requested dimension will consume significant memory (e.g. >100MB).
+```bash
+vault write sys/quotas/rate-limit/vector-encrypt \
+    path="vector/encrypt/vector" \
+    rate=100
+```
+
+### 3. Memory Locking
+
+Ensure `disable_mlock = false` in your Vault config to prevent the matrix from being swapped to disk.
+
+### 4. Monitoring
+
+The plugin logs encryption requests (without vector content):
+
+```
+[INFO]  vector encryption request: dimension=1536 client_id=hvs.xxx
+```
+
+---
+
+## 📁 Project Structure
+
+```
+vault-plugin-secrets-vector-dpe/
+├── cmd/
+│   └── vault-plugin-secrets-vector-dpe/
+│       └── main.go              # Plugin entry point
+├── internal/
+│   └── plugin/
+│       ├── backend.go           # Backend factory, caching, lifecycle
+│       ├── config.go            # config/rotate endpoint
+│       ├── encrypt.go           # encrypt/vector endpoint
+│       ├── matrix_utils.go      # Orthogonal matrix & noise generation
+│       └── *_test.go            # Unit tests
+├── scripts/
+│   ├── validate_sap.py          # SAP scheme validation
+│   ├── validate_hardening.py    # Security hardening tests
+│   └── verify_release.py        # Release verification (UAT)
+├── .github/
+│   └── workflows/
+│       └── test.yml             # CI pipeline
+├── go.mod
+├── go.sum
+├── Makefile
+├── README.md
+├── SECURITY.md
+└── LICENSE
+```
+
+---
+
+## 🧪 Testing
+
+```bash
+# Run unit tests
+make test
+
+# Run linter
+make lint
+
+# Run full validation suite
+make validate
+```
 
 ---
 
 ## 🔧 Troubleshooting
 
-**Error: `vector dimension X does not match configured dimension Y`**
-*   **Cause:** You are trying to encrypt a vector (e.g., size 768) that doesn't match the configured dimension (e.g., 1536).
-*   **Fix:** Re-configure the engine using `config/rotate` with the correct dimension, or fix your input data.
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `vector dimension X does not match configured dimension Y` | Input vector size mismatch | Reconfigure with correct dimension or fix input |
+| `scaling_factor must be positive` | Invalid parameter | Use a positive value for scaling_factor |
+| `dimension exceeds maximum allowed 8192` | DoS protection triggered | Use dimension ≤ 8192 |
+| `mlock` errors | Memory locking disabled | Enable mlock in Vault config or run with sufficient privileges |
 
-**Error: `internal error` during `config/rotate`**
-*   **Cause:** Usually due to an invalid float format or zero/negative dimension.
-*   **Fix:** Ensure `scaling_factor` and `approximation_factor` are valid floats.
+---
 
-**Performance Latency**
-*   **Cause:** Generating a 1536x1536 orthogonal matrix takes time (~100ms-500ms).
-*   **Fix:** The matrix is **cached** in memory. The first request after a rotation or restart will be slow; subsequent requests are fast matrix multiplications.
+## 📄 License
+
+Apache License 2.0. See [LICENSE](LICENSE).
+
+---
+
+## 🔐 Security
+
+See [SECURITY.md](SECURITY.md) for:
+- Threat model
+- Security assumptions and limitations
+- Responsible disclosure policy

@@ -1,4 +1,7 @@
-package main
+// Copyright 2024 The vault-plugin-secrets-vector-dpe Authors
+// SPDX-License-Identifier: Apache-2.0
+
+package plugin
 
 import (
 	"math"
@@ -63,3 +66,4 @@ func TestParseVector(t *testing.T) {
 		})
 	}
 }
+

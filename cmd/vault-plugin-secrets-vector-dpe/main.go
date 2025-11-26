@@ -1,3 +1,8 @@
+// Copyright 2024 The vault-plugin-secrets-vector-dpe Authors
+// SPDX-License-Identifier: Apache-2.0
+
+// Package main is the entry point for the Vault plugin.
+// It bootstraps the plugin server and registers the backend factory.
 package main
 
 import (
@@ -6,6 +11,8 @@ import (
 
 	"github.com/hashicorp/vault/api"
 	"github.com/hashicorp/vault/sdk/plugin"
+
+	vectordpe "github.com/lpassig/vault-plugin-secrets-vector-dpe/internal/plugin"
 )
 
 func main() {
@@ -19,9 +26,10 @@ func main() {
 	tlsProviderFunc := api.VaultPluginTLSProvider(tlsConfig)
 
 	if err := plugin.Serve(&plugin.ServeOpts{
-		BackendFactoryFunc: Factory,
+		BackendFactoryFunc: vectordpe.Factory,
 		TLSProviderFunc:    tlsProviderFunc,
 	}); err != nil {
 		log.Fatalf("plugin server exited with error: %v", err)
 	}
 }
+

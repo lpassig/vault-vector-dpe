@@ -1,4 +1,4 @@
-module github.com/lennartpassig/vault-plugin-dev/plugins
+module github.com/lpassig/vault-plugin-secrets-vector-dpe
 
 go 1.22
 
