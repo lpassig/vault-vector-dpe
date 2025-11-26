@@ -10,6 +10,7 @@ This plugin enables secure vector search (e.g., in Pinecone, Milvus, or Weaviate
 *   **Probabilistic Encryption**: Unlike standard rotation, this plugin adds noise to every encryption operation. Encrypting the same vector twice yields different ciphertexts ($C_1 \neq C_2$), defeating simple frequency analysis.
 *   **Tunable Security/Utility**: Configure the trade-off between search accuracy and cryptographic security using the `approximation_factor`.
 *   **Stateless**: The encryption key (Orthogonal Matrix) is derived deterministically from a seed stored in Vault, requiring no large matrix storage.
+*   **Cryptographically Secure**: Uses AES-CTR based RNG for full 256-bit entropy utilization and secure noise generation.
 
 ---
 
@@ -22,9 +23,9 @@ C = s \cdot Q \cdot v + \lambda_m
 $$
 
 Where:
-*   **$Q$**: An Orthogonal Matrix ($Q^T Q = I$) derived from a secret seed. This rotates the vector in high-dimensional space.
+*   **$Q$**: An Orthogonal Matrix ($Q^T Q = I$) derived from a secret seed. This rotates the vector in high-dimensional space. The matrix is generated using a CSPRNG (AES-CTR) to ensure the full 256-bit seed entropy is used.
 *   **$s$**: A secret scaling factor (scalar).
-*   **$\lambda_m$**: A **random noise vector** generated fresh for every request. It is sampled uniformly from a ball derived from the `approximation_factor` ($\beta$).
+*   **$\lambda_m$**: A **random noise vector** generated fresh for every request using a secure RNG. It is sampled uniformly from a ball derived from the `approximation_factor` ($\beta$).
 
 Because $\lambda_m$ is random, the encryption is **probabilistic**. An attacker cannot easily solve the linear system $C = Q \cdot v$ to recover $Q$ because the exact values are masked by noise.
 
@@ -82,7 +83,7 @@ Before you can encrypt vectors, you must initialize the engine by generating a s
 
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `dimension` | `int` | `1536` | Dimensionality of your embeddings (e.g., 1536 for OpenAI `text-embedding-3-small`). |
+| `dimension` | `int` | `1536` | Dimensionality of your embeddings (e.g., 1536 for OpenAI `text-embedding-3-small`). **Max: 8192**. |
 | `scaling_factor` | `float` | `1.0` | Scalar multiplier ($s$). Scales the magnitude of encrypted vectors. |
 | `approximation_factor` | `float` | `5.0` | The Noise Factor ($\beta$). **Higher = More Secure** (more noise), but **Less Accurate** search. |
 
@@ -150,6 +151,10 @@ vault write sys/quotas/rate-limit/vector-encrypt \
 ### 3. Memory Hygiene
 Ensure your Vault server has `disable_mlock = false` (default) in its configuration. The orthogonal matrix $Q$ is large (~18MB for dim=1536) and resides in memory; `mlock` prevents it from being swapped to disk.
 
+### 4. Input Validation & DoS Protection
+*   **Dimension Limit**: The plugin enforces a strict maximum dimension of **8192** to prevent memory exhaustion attacks.
+*   **Input Sanitization**: Inputs containing `NaN` or `Infinity` are rejected to prevent mathematical corruption.
+
 ---
 
 ## 🔧 Troubleshooting
@@ -165,4 +170,3 @@ Ensure your Vault server has `disable_mlock = false` (default) in its configurat
 **Performance Latency**
 *   **Cause:** Generating a 1536x1536 orthogonal matrix takes time (~100ms-500ms).
 *   **Fix:** The matrix is **cached** in memory. The first request after a rotation or restart will be slow; subsequent requests are fast matrix multiplications.
-
