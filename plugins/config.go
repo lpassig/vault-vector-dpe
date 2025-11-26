@@ -15,6 +15,10 @@ const (
 	defaultScale         = 1.0
 	defaultApproximation = 5.0
 	seedLength           = 32
+	// Define a memory warning threshold (e.g., 100MB for the matrix)
+	// 1536*1536*8 bytes ~ 18MB.
+	// 4096*4096*8 bytes ~ 128MB.
+	memoryWarningThreshold = 100 * 1024 * 1024
 )
 
 func configPaths(b *vectorBackend) []*framework.Path {
@@ -70,6 +74,12 @@ func (b *vectorBackend) handleConfigRotate(ctx context.Context, req *logical.Req
 		return nil, fmt.Errorf("dimension %d exceeds maximum allowed %d", dimension, MaxDimension)
 	}
 
+	// Resource Awareness: Check estimated memory usage
+	estimatedMemory := int64(dimension) * int64(dimension) * 8 // float64 is 8 bytes
+	if estimatedMemory > memoryWarningThreshold {
+		b.Logger().Warn("configured dimension requires significant memory", "dimension", dimension, "estimated_bytes", estimatedMemory)
+	}
+
 	scalingFactor, err := coerceFloat(data.Get("scaling_factor"))
 	if err != nil {
 		return nil, fmt.Errorf("invalid scaling_factor: %w", err)
@@ -100,13 +110,17 @@ func (b *vectorBackend) handleConfigRotate(ctx context.Context, req *logical.Req
 	b.invalidateCacheLocked()
 	b.matrixLock.Unlock()
 
-	return &logical.Response{
+	resp := &logical.Response{
 		Data: map[string]interface{}{
 			"dimension":            dimension,
 			"scaling_factor":       scalingFactor,
 			"approximation_factor": approximationFactor,
 		},
-	}, nil
+	}
+	if estimatedMemory > memoryWarningThreshold {
+		resp.AddWarning(fmt.Sprintf("Dimension %d requires approx %d MB of memory for the matrix.", dimension, estimatedMemory/1024/1024))
+	}
+	return resp, nil
 }
 
 func (b *vectorBackend) configExists(ctx context.Context, req *logical.Request, _ *framework.FieldData) (bool, error) {

@@ -154,6 +154,11 @@ Ensure your Vault server has `disable_mlock = false` (default) in its configurat
 ### 4. Input Validation & DoS Protection
 *   **Dimension Limit**: The plugin enforces a strict maximum dimension of **8192** to prevent memory exhaustion attacks.
 *   **Input Sanitization**: Inputs containing `NaN` or `Infinity` are rejected to prevent mathematical corruption.
+*   **Matrix Validation**: The plugin validates the orthogonality of the generated matrix ($Q^T Q \approx I$) before use to ensure mathematical correctness.
+
+### 5. Monitoring & Auditing
+*   **Audit Logging**: The plugin logs encryption request metadata (dimension, client ID) to the Vault logs for audit trails. Plaintext vectors are **never** logged.
+*   **Resource Warnings**: The configuration endpoint warns if the requested dimension will consume significant memory (e.g. >100MB).
 
 ---
 

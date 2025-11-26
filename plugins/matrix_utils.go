@@ -49,7 +49,41 @@ func GenerateOrthogonalMatrix(seed []byte, dim int) (*mat.Dense, error) {
 	var q mat.Dense
 	qr.QTo(&q)
 
+	// Validate Orthogonality before returning
+	if err := ValidateOrthogonality(&q); err != nil {
+		return nil, fmt.Errorf("generated matrix failed orthogonality check: %w", err)
+	}
+
 	return &q, nil
+}
+
+// ValidateOrthogonality checks if Q^T * Q is approximately Identity.
+// Tolerance is 1e-6.
+func ValidateOrthogonality(q *mat.Dense) error {
+	r, c := q.Dims()
+	if r != c {
+		return fmt.Errorf("matrix is not square: %dx%d", r, c)
+	}
+
+	// Compute product = Q^T * Q
+	var product mat.Dense
+	product.Mul(q.T(), q)
+
+	// Check against Identity
+	epsilon := 1e-6
+	for i := 0; i < r; i++ {
+		for j := 0; j < c; j++ {
+			val := product.At(i, j)
+			expected := 0.0
+			if i == j {
+				expected = 1.0
+			}
+			if math.Abs(val-expected) > epsilon {
+				return fmt.Errorf("orthogonality check failed at (%d, %d): got %v, expected %v", i, j, val, expected)
+			}
+		}
+	}
+	return nil
 }
 
 // NewSecureRNG creates a new math/rand/v2.Rand seeded with 32 bytes of

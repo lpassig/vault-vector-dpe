@@ -74,6 +74,20 @@ func (b *vectorBackend) handleEncryptVector(ctx context.Context, req *logical.Re
 		}
 	}
 
+	// Validate Vector Norm (Abuse/DoS Mitigation)
+	// Reject extremely large vectors that could cause numeric overflow downstream
+	var normSq float64
+	for _, v := range vector {
+		normSq += v * v
+	}
+	// Arbitrary limit: 1e12 (approx 1e6 per element on average). Standard embeddings are normalized to 1.0.
+	if normSq > 1e12 {
+		return nil, fmt.Errorf("vector magnitude too large")
+	}
+
+	// Audit Logging: Log the request metadata (but NOT the vector content)
+	b.Logger().Info("vector encryption request", "dimension", cfg.Dimension, "client_id", req.ClientToken)
+
 	// Memory Pooling: Get buffer for input backing slice
 	inputSlicePtr := b.floatSlicePool.Get().(*[]float64)
 	defer func() {
@@ -136,18 +150,6 @@ func (b *vectorBackend) handleEncryptVector(ctx context.Context, req *logical.Re
 
 	// 3. Scale and Add Noise: c = s * v' + lambda_m
 	// Get buffer for ciphertext (result)
-	// Note: We need to return the result. If we pool the backing array,
-	// we must copy it to the response or ensure the response serialization happens before we Put.
-	// Vault SDK doesn't guarantee when serialization happens relative to this function return.
-	// Safest approach for result is NOT to pool it, or copy to a new slice for return.
-	// Given the requirement "Get slices for input, noise, and ciphertext from the pool",
-	// I will assume we should use pooled memory for calculation, but return a copy
-	// OR rely on the fact that we are returning a map[string]interface{} which might be serialized immediately by framework.
-	// However, `framework` typically returns the response object.
-	// To be safe and correct, we should allocate the final response slice normally.
-	// BUT, to strictly follow "Get slices for ... ciphertext ... from pool", I will do so,
-	// but I will perform a copy to a new slice for the final return value to avoid data corruption/race conditions.
-
 	ciphertextBufPtr := b.floatSlicePool.Get().(*[]float64)
 	defer func() {
 		for i := range *ciphertextBufPtr {

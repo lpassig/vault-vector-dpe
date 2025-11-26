@@ -84,6 +84,14 @@ func (b *vectorBackend) writeConfig(ctx context.Context, storage logical.Storage
 }
 
 func (b *vectorBackend) invalidateCacheLocked() {
+	// Memory Hygiene: Attempt to zero out the matrix memory if possible.
+	// Gonum Dense matrices wrap a slice. We can zero that slice.
+	if b.cachedMatrix != nil {
+		data := b.cachedMatrix.RawMatrix().Data
+		for i := range data {
+			data[i] = 0
+		}
+	}
 	b.cachedMatrix = nil
 	b.cachedConfig = nil
 }
@@ -121,6 +129,17 @@ func (b *vectorBackend) getMatrixAndConfig(ctx context.Context, storage logical.
 	matrix, err := GenerateOrthogonalMatrix(seedBytes, cfg.Dimension)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	// Validate Orthogonality before using
+	if err := ValidateOrthogonality(matrix); err != nil {
+		// If validation fails, we must fail hard and NOT cache this matrix.
+		// Securely erase generated matrix before returning
+		data := matrix.RawMatrix().Data
+		for i := range data {
+			data[i] = 0
+		}
+		return nil, nil, fmt.Errorf("generated matrix failed orthogonality check: %w", err)
 	}
 
 	b.cachedMatrix = matrix

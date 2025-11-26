@@ -10,11 +10,11 @@ ifndef OS
 	endif
 endif
 
-.PHONY: build clean fmt test
+.PHONY: build clean fmt test lint
 
 default: build
 
-all: fmt build test
+all: fmt lint test build
 
 build:
 	@echo "Building vault-vector-dpe..."
@@ -27,7 +27,12 @@ clean:
 fmt:
 	@cd plugins && go fmt ./...
 
+lint:
+	@echo "Linting..."
+	@cd plugins && go vet ./...
+
 test:
+	@echo "Running tests..."
 	@cd plugins && go test -v ./...
 
 # Helper to register with a local dev vault (requires vault server running)
@@ -39,4 +44,3 @@ dev-register: build
 	@vault plugin register -sha256=$(SHASUM) -command="vault-vector-dpe" secret vector-dpe || true
 	@echo "Enabling secrets engine..."
 	@vault secrets enable -path=vector vector-dpe || true
-
