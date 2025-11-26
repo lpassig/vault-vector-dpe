@@ -4,9 +4,8 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"math/rand"
+	"math/rand/v2"
 
-	"github.com/lennartpassig/vault-plugin-dev/plugins/utils"
 	"gonum.org/v1/gonum/mat"
 )
 
@@ -21,8 +20,8 @@ func GenerateOrthogonalMatrix(seed []byte, dim int) (*mat.Dense, error) {
 	if dim > MaxDimension {
 		return nil, fmt.Errorf("dimension %d exceeds maximum allowed %d", dim, MaxDimension)
 	}
-	if len(seed) == 0 {
-		return nil, fmt.Errorf("seed must not be empty")
+	if len(seed) != 32 {
+		return nil, fmt.Errorf("seed must be exactly 32 bytes (got %d)", len(seed))
 	}
 
 	// Warn if dimension is large but within limits
@@ -30,12 +29,11 @@ func GenerateOrthogonalMatrix(seed []byte, dim int) (*mat.Dense, error) {
 		log.Printf("[WARN] vault-dpe: generating %dx%d orthogonal matrix – this can be slow", dim, dim)
 	}
 
-	// Use CryptoSource to ensure full 256-bit entropy from the seed is used
-	src, err := utils.NewCryptoSource(seed)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create crypto source: %w", err)
-	}
-	rng := rand.New(src)
+	// Use ChaCha8 for high-performance CSPRNG seeded from the key.
+	// Copy seed to [32]byte array required by NewChaCha8
+	var seed32 [32]byte
+	copy(seed32[:], seed)
+	rng := rand.New(rand.NewChaCha8(seed32))
 
 	data := make([]float64, dim*dim)
 	for i := range data {

@@ -6,12 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	mathrand "math/rand"
+	mathrand "math/rand/v2"
 	"strconv"
 
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
-	"github.com/lennartpassig/vault-plugin-dev/plugins/utils"
 	"gonum.org/v1/gonum/mat"
 )
 
@@ -73,19 +72,21 @@ func (b *vectorBackend) handleEncryptVector(ctx context.Context, req *logical.Re
 	output.MulVec(matrix, input)
 
 	// 2. Generate Noise (Perturbation): lambda_m
-	// Fix: Use crypto/rand for the seed instead of time.Now()
+	// Fix: Use crypto/rand -> ChaCha8 for high performance CSPRNG per request.
 	// We generate a 32-byte seed from crypto/rand for every request.
-	seed := make([]byte, 32)
-	if _, err := rand.Read(seed); err != nil {
+	var seed [32]byte
+	if _, err := rand.Read(seed[:]); err != nil {
 		return nil, fmt.Errorf("failed to generate random seed: %w", err)
 	}
 
-	src, err := utils.NewCryptoSource(seed)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create crypto source: %w", err)
-	}
-	rng := mathrand.New(src)
+	// Use ChaCha8 (math/rand/v2) for fast CSPRNG
+	rng := mathrand.New(mathrand.NewChaCha8(seed))
 
+	// Note: GenerateNormalizedVector now accepts *math/rand/v2.Rand
+	// We need to update GenerateNormalizedVector signature in matrix_utils.go first?
+	// Wait, I already updated matrix_utils.go to use math/rand/v2 but let's check the signature I wrote.
+	// I wrote `func GenerateNormalizedVector(rng *rand.Rand, ...)` where rand is `math/rand/v2`.
+	// So this should match.
 	noise := GenerateNormalizedVector(rng, cfg.Dimension, cfg.ScalingFactor, cfg.ApproximationFactor)
 
 	// 3. Scale and Add Noise: c = s * v' + lambda_m
