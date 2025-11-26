@@ -1,14 +1,16 @@
 package main
 
 import (
-	"encoding/binary"
 	"fmt"
 	"log"
 	"math"
 	"math/rand"
 
+	"github.com/lennartpassig/vault-plugin-dev/plugins/utils"
 	"gonum.org/v1/gonum/mat"
 )
+
+const MaxDimension = 8192
 
 // GenerateOrthogonalMatrix generates a random orthogonal matrix using QR decomposition.
 // This corresponds to the core rotation logic (Q) in the SAP scheme.
@@ -16,16 +18,24 @@ func GenerateOrthogonalMatrix(seed []byte, dim int) (*mat.Dense, error) {
 	if dim <= 0 {
 		return nil, fmt.Errorf("dimension must be positive")
 	}
+	if dim > MaxDimension {
+		return nil, fmt.Errorf("dimension %d exceeds maximum allowed %d", dim, MaxDimension)
+	}
 	if len(seed) == 0 {
 		return nil, fmt.Errorf("seed must not be empty")
 	}
 
-	if dim > 2000 {
+	// Warn if dimension is large but within limits
+	if dim > 2048 {
 		log.Printf("[WARN] vault-dpe: generating %dx%d orthogonal matrix – this can be slow", dim, dim)
 	}
 
-	seedInt := foldSeed(seed)
-	rng := rand.New(rand.NewSource(seedInt))
+	// Use CryptoSource to ensure full 256-bit entropy from the seed is used
+	src, err := utils.NewCryptoSource(seed)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create crypto source: %w", err)
+	}
+	rng := rand.New(src)
 
 	data := make([]float64, dim*dim)
 	for i := range data {
@@ -41,18 +51,6 @@ func GenerateOrthogonalMatrix(seed []byte, dim int) (*mat.Dense, error) {
 	qr.QTo(&q)
 
 	return &q, nil
-}
-
-func foldSeed(seed []byte) int64 {
-	if len(seed) >= 8 {
-		return int64(binary.LittleEndian.Uint64(seed[:8]))
-	}
-
-	var acc uint64
-	for i, b := range seed {
-		acc += uint64(b) << (8 * (i % 8))
-	}
-	return int64(acc % math.MaxInt64)
 }
 
 // GenerateNormalizedVector generates the perturbation vector lambda_m for the SAP scheme.

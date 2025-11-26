@@ -65,6 +65,10 @@ func (b *vectorBackend) handleConfigRotate(ctx context.Context, req *logical.Req
 	if dimension <= 0 {
 		return nil, fmt.Errorf("dimension must be positive")
 	}
+	// Enforce DoS protection limit
+	if dimension > MaxDimension {
+		return nil, fmt.Errorf("dimension %d exceeds maximum allowed %d", dimension, MaxDimension)
+	}
 
 	scalingFactor, err := coerceFloat(data.Get("scaling_factor"))
 	if err != nil {

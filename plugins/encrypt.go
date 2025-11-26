@@ -2,14 +2,16 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"math/rand"
+	"math"
+	mathrand "math/rand"
 	"strconv"
-	"time"
 
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
+	"github.com/lennartpassig/vault-plugin-dev/plugins/utils"
 	"gonum.org/v1/gonum/mat"
 )
 
@@ -56,26 +58,45 @@ func (b *vectorBackend) handleEncryptVector(ctx context.Context, req *logical.Re
 		return nil, fmt.Errorf("vector dimension %d does not match configured dimension %d", len(vector), cfg.Dimension)
 	}
 
+	// Validate vector elements for NaN/Inf
+	for i, v := range vector {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return nil, fmt.Errorf("vector element %d is invalid (NaN or Inf)", i)
+		}
+	}
+
 	// SAP Encryption Logic:
 	// 1. Apply Orthogonal Rotation: v' = Q * v
-	//    (Note: IronCore applies rotation implicitly if Q is part of the key, or explicitly.
-	//     Here we treat Q as the primary secret key component.)
 	input := mat.NewVecDense(cfg.Dimension, append([]float64(nil), vector...))
 	var rotated mat.VecDense
 	output := &rotated
 	output.MulVec(matrix, input)
 
 	// 2. Generate Noise (Perturbation): lambda_m
-	//    Using a fresh RNG seeded with system time for non-deterministic IV generation
-	//    (In a real protocol, the seed/IV would be part of the ciphertext output).
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	// Fix: Use crypto/rand for the seed instead of time.Now()
+	// We generate a 32-byte seed from crypto/rand for every request.
+	seed := make([]byte, 32)
+	if _, err := rand.Read(seed); err != nil {
+		return nil, fmt.Errorf("failed to generate random seed: %w", err)
+	}
+
+	src, err := utils.NewCryptoSource(seed)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create crypto source: %w", err)
+	}
+	rng := mathrand.New(src)
+
 	noise := GenerateNormalizedVector(rng, cfg.Dimension, cfg.ScalingFactor, cfg.ApproximationFactor)
 
 	// 3. Scale and Add Noise: c = s * v' + lambda_m
 	ciphertext := make([]float64, cfg.Dimension)
 	rotatedData := output.RawVector().Data
 	for i := 0; i < cfg.Dimension; i++ {
-		ciphertext[i] = cfg.ScalingFactor*rotatedData[i] + noise[i]
+		val := cfg.ScalingFactor*rotatedData[i] + noise[i]
+		if math.IsNaN(val) || math.IsInf(val, 0) {
+			return nil, fmt.Errorf("encryption resulted in invalid value at index %d", i)
+		}
+		ciphertext[i] = val
 	}
 
 	return &logical.Response{
