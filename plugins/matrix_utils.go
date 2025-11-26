@@ -52,20 +52,28 @@ func GenerateOrthogonalMatrix(seed []byte, dim int) (*mat.Dense, error) {
 	return &q, nil
 }
 
-// GenerateSecureNoise generates the perturbation vector lambda_m for the SAP scheme
-// using a fast, user-space CSPRNG (ChaCha8) seeded with system entropy.
-func GenerateSecureNoise(dim int, scalingFactor float64, approximationFactor float64) ([]float64, error) {
-	// 1. Generate a 32-byte seed from crypto/rand (1 syscall)
+// NewSecureRNG creates a new math/rand/v2.Rand seeded with 32 bytes of
+// cryptographic entropy from crypto/rand. It uses the ChaCha8 algorithm.
+func NewSecureRNG() (*mathrand.Rand, error) {
 	var seed [32]byte
 	if _, err := rand.Read(seed[:]); err != nil {
 		return nil, fmt.Errorf("failed to generate random seed: %w", err)
 	}
+	return mathrand.New(mathrand.NewChaCha8(seed)), nil
+}
 
-	// 2. Initialize ChaCha8 CSPRNG
-	rng := mathrand.New(mathrand.NewChaCha8(seed))
+// GenerateSecureNoise generates the perturbation vector lambda_m for the SAP scheme
+// using a fast, user-space CSPRNG (ChaCha8) seeded with system entropy.
+// It fills the provided buffer or allocates a new one if nil.
+func GenerateSecureNoise(buffer []float64, dim int, scalingFactor float64, approximationFactor float64) ([]float64, error) {
+	// 1. Initialize ChaCha8 CSPRNG
+	rng, err := NewSecureRNG()
+	if err != nil {
+		return nil, err
+	}
 
-	// 3. Generate Noise
-	return GenerateNormalizedVector(rng, dim, scalingFactor, approximationFactor), nil
+	// 2. Generate Noise
+	return GenerateNormalizedVector(rng, buffer, dim, scalingFactor, approximationFactor), nil
 }
 
 // GenerateNormalizedVector generates the perturbation vector lambda_m for the SAP scheme.
@@ -76,14 +84,24 @@ func GenerateSecureNoise(dim int, scalingFactor float64, approximationFactor flo
 // 4. lambda_m <-- u * x / ||u||
 //
 // NOTE: This accepts *math/rand/v2.Rand for performance.
-func GenerateNormalizedVector(rng *mathrand.Rand, dim int, scalingFactor float64, approximationFactor float64) []float64 {
+func GenerateNormalizedVector(rng *mathrand.Rand, buffer []float64, dim int, scalingFactor float64, approximationFactor float64) []float64 {
+	// Use provided buffer or allocate
+	lambdaM := buffer
+	if cap(lambdaM) < dim {
+		lambdaM = make([]float64, dim)
+	} else {
+		lambdaM = lambdaM[:dim]
+	}
+
 	// 1. Sample u from multivariate normal distribution N(0, I_d)
 	// Since covariance is identity, we can just sample d independent standard normals.
-	u := make([]float64, dim)
+	// We use the buffer for 'u' initially to avoid extra allocation,
+	// effectively calculating in-place where possible.
+	// However, we need to store 'u' while calculating normSq.
 	var normSq float64
 	for i := 0; i < dim; i++ {
 		val := rng.NormFloat64()
-		u[i] = val
+		lambdaM[i] = val // Store u in lambdaM temporarily
 		normSq += val * val
 	}
 	uNorm := math.Sqrt(normSq)
@@ -98,10 +116,10 @@ func GenerateNormalizedVector(rng *mathrand.Rand, dim int, scalingFactor float64
 	x := radius * math.Pow(xPrime, 1.0/float64(dim))
 
 	// 4. Calculate normalized vector lambda_m = u * x / ||u||
-	lambdaM := make([]float64, dim)
+	// Reuse lambdaM which holds 'u'
 	scale := x / uNorm
 	for i := 0; i < dim; i++ {
-		lambdaM[i] = u[i] * scale
+		lambdaM[i] = lambdaM[i] * scale
 	}
 
 	return lambdaM

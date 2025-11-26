@@ -26,15 +26,15 @@ type rotationConfig struct {
 type vectorBackend struct {
 	*framework.Backend
 
-	matrixLock   sync.RWMutex
-	cachedMatrix *mat.Dense
-	cachedConfig *rotationConfig
-	bufferPool   sync.Pool
+	matrixLock     sync.RWMutex
+	cachedMatrix   *mat.Dense
+	cachedConfig   *rotationConfig
+	floatSlicePool sync.Pool
 }
 
 func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
 	b := &vectorBackend{
-		bufferPool: sync.Pool{
+		floatSlicePool: sync.Pool{
 			New: func() interface{} {
 				// Initialize with 0 length, will be resized as needed
 				s := make([]float64, 0)
