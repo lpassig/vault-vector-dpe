@@ -34,7 +34,7 @@ Because $\lambda_m$ is random, the encryption is **probabilistic**. An attacker 
 ## 🚀 Installation & Registration
 
 ### 1. Build the Plugin
-Requires Go 1.21+.
+Requires Go 1.22+.
 
 ```bash
 cd plugins/
