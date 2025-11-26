@@ -88,6 +88,59 @@ $$C = s \cdot Q \cdot v + \lambda$$
 
 The noise $\lambda$ makes encryption **probabilistic**: encrypting the same vector twice yields different ciphertexts, preventing frequency analysis.
 
+### End-to-End RAG Pipeline
+
+The following diagram shows how this plugin integrates into a complete Retrieval-Augmented Generation (RAG) system:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Doc as Document Store
+    participant Indexer as Ingestion/Indexer
+    participant User as User/App
+    participant Embed as Embedding Model
+    participant Vault as Vault (Vector DPE)
+    participant VDB as Vector DB
+    participant LLM as LLM
+
+    rect rgb(240, 248, 255)
+        note over Indexer, VDB: Ingestion Phase
+        Indexer->>Doc: Read Document
+        Indexer->>Embed: Embed(Text)
+        Embed-->>Indexer: Plaintext Vector (v)
+        
+        Indexer->>Vault: write vector/encrypt (v)
+        Vault-->>Indexer: Ciphertext (C)
+        
+        Indexer->>VDB: Store {id, vector: C, metadata}
+        note right of VDB: DB only holds C.<br/>Distances are preserved.<br/>No Plaintext stored.
+    end
+
+    rect rgb(255, 245, 238)
+        note over User, LLM: Query Phase
+        User->>Embed: Embed(User Question)
+        Embed-->>User: Query Vector (q)
+        
+        User->>Vault: write vector/encrypt (q)
+        Vault-->>User: Encrypted Query (Cq)
+        
+        User->>VDB: Search(vector: Cq, top_k=5)
+        note right of VDB: Calculates distance<br/>between C and Cq
+        VDB-->>User: Return Top Document IDs
+        
+        User->>Doc: Fetch Original Text by ID
+        Doc-->>User: Return Text Passages
+        
+        User->>LLM: Prompt: "Context: [Text] Question:..."
+        LLM-->>User: Final Answer
+    end
+```
+
+**Key Points:**
+- 📥 **Ingestion:** Documents are embedded, encrypted via Vault, and stored in the Vector DB as ciphertexts
+- 🔍 **Query:** User queries are also encrypted before searching—the Vector DB never sees plaintext vectors
+- 🔐 **Privacy:** Distance calculations work on encrypted data; the DB cannot reconstruct original embeddings
+
 ---
 
 ## 🚀 Installation
