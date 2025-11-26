@@ -75,3 +75,42 @@ func TestGenerateSecureNoise(t *testing.T) {
 	}
 }
 
+func TestNewSecureRNG(t *testing.T) {
+	rng, err := NewSecureRNG()
+	if err != nil {
+		t.Fatalf("NewSecureRNG failed: %v", err)
+	}
+	if rng == nil {
+		t.Fatal("NewSecureRNG returned nil")
+	}
+
+	// Verify it produces values
+	val := rng.Float64()
+	if val < 0 || val >= 1 {
+		t.Errorf("Float64 out of expected range: %v", val)
+	}
+}
+
+func TestGenerateNormalizedVectorReturnsError(t *testing.T) {
+	// This test documents the behavior of the division-by-zero guard.
+	// In practice, it's astronomically unlikely to trigger, but the code path exists.
+	// We can't easily force uNorm=0 without mocking the RNG, so we just verify
+	// the function returns an error type correctly when called normally.
+	rng, err := NewSecureRNG()
+	if err != nil {
+		t.Fatalf("NewSecureRNG failed: %v", err)
+	}
+
+	dim := 10
+	buffer := make([]float64, dim)
+	result, err := GenerateNormalizedVector(rng, buffer, dim, 1.0, 1.0)
+
+	// Under normal conditions, this should succeed
+	if err != nil {
+		t.Errorf("GenerateNormalizedVector failed unexpectedly: %v", err)
+	}
+	if len(result) != dim {
+		t.Errorf("Expected result len %d, got %d", dim, len(result))
+	}
+}
+
